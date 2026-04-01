@@ -1,14 +1,433 @@
 <!DOCTYPE html>
 <html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>포항시 공동주택과 동향 모니터링</title>
-    <meta name="description" content="포항시 공동주택과 업무 동향 모니터링 대시보드" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏙️</text></svg>" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>포항시 공동주택과 동향 모니터링</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Nanum Gothic','Malgun Gothic',sans-serif;background:#f0f4f8;min-height:100vh}
+  a{color:inherit}
+  ::-webkit-scrollbar{width:4px;height:4px}
+  ::-webkit-scrollbar-thumb{background:#c0d0e0;border-radius:2px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const RSS2JSON = "https://api.rss2json.com/v1/api.json";
+
+const KR_RSS = {
+  pressrelease: { label:"보도자료",          url:"https://www.korea.kr/rss/pressrelease.xml" },
+  ebriefing:    { label:"부처 브리핑",        url:"https://www.korea.kr/rss/ebriefing.xml" },
+  policy:       { label:"정책뉴스",           url:"https://www.korea.kr/rss/policy.xml" },
+  insight:      { label:"이슈인사이트",       url:"https://www.korea.kr/rss/insight.xml" },
+  column:       { label:"정책칼럼",           url:"https://www.korea.kr/rss/column.xml" },
+  fact:         { label:"사실은이렇습니다",   url:"https://www.korea.kr/rss/fact.xml" },
+  cabinet:      { label:"국무회의 브리핑",    url:"https://www.korea.kr/rss/cabinet.xml" },
+  expdoc:       { label:"전문자료",           url:"https://www.korea.kr/rss/expdoc.xml" },
+  reporter:     { label:"국민이 말하는 정책", url:"https://www.korea.kr/rss/reporter.xml" },
+  president:    { label:"청와대 브리핑",      url:"https://www.korea.kr/rss/president.xml" },
+  archive:      { label:"K-공감 전체",        url:"https://www.korea.kr/rss/archive.xml" },
+  speech:       { label:"연설문",             url:"https://www.korea.kr/rss/speech.xml" },
+};
+
+const DEFAULT_TABS = [
+  { id:"official", label:"🏛 공식발표", icon:"🏛", color:"#1a5c9a",
+    desc:"보도자료 + 부처브리핑",
+    feeds:["pressrelease","ebriefing"], googleQuery:"",
+    keywords:["공동주택","아파트","주거","주택","입주자","관리비","하자","재건축","리모델링"],
+    naverQuery:"국토교통부 공동주택 보도자료",
+    googleSearchQuery:"국토교통부 공동주택 site:korea.kr" },
+  { id:"policy", label:"📰 정책뉴스", icon:"📰", color:"#2e7d32",
+    desc:"정책뉴스 + 이슈인사이트",
+    feeds:["policy","insight"], googleQuery:"",
+    keywords:["공동주택","아파트","주거","주택","입주","관리비"],
+    naverQuery:"공동주택 주택 정책뉴스",
+    googleSearchQuery:"공동주택 정책뉴스" },
+  { id:"analysis", label:"🔍 심층분석", icon:"🔍", color:"#6a1060",
+    desc:"정책칼럼 + 전문자료",
+    feeds:["column","expdoc"], googleQuery:"",
+    keywords:["공동주택","주택","주거","부동산"],
+    naverQuery:"공동주택 주택 분석 칼럼",
+    googleSearchQuery:"공동주택 정책 분석" },
+  { id:"pohang", label:"🏘 포항·경북", icon:"🏘", color:"#c05000",
+    desc:"구글뉴스 RSS — 포항·경북 지역",
+    feeds:[], googleQuery:"포항시 공동주택 OR 경상북도 공동주택",
+    keywords:["포항","경북","공동주택","아파트"],
+    naverQuery:"포항시 공동주택 아파트",
+    googleSearchQuery:"포항시 공동주택 경상북도" },
+  { id:"hug", label:"🏢 HUG·LH", icon:"🏢", color:"#005a8c",
+    desc:"구글뉴스 RSS — 공공기관 발표",
+    feeds:[], googleQuery:"HUG 주택도시보증공사 LH공사 공동주택",
+    keywords:["HUG","LH","주택도시보증","공동주택"],
+    naverQuery:"HUG LH 공동주택 공고",
+    googleSearchQuery:"HUG LH공사 공동주택" },
+];
+
+const ICONS = ["🏛","📰","🔍","🏘","🏢","📋","⚖️","💰","🔧","📢","🌐","🏗","📊","🔔","🏠","🗺"];
+const STORAGE_KEY = "pohang_v7_tabs";
+const SCRAPS_KEY  = "pohang_scraps_v1";
+
+const PUB_KW = ["국토교통부","포항시","경상북도","HUG","LH","주택도시보증","한국부동산원",
+  "행정안전부","법제처","시청","도청","공사","공단","위원회","정부","정책브리핑","국토부"];
+const isPub = (s="") => PUB_KW.some(k => s.includes(k));
+
+function passDate(d, f) {
+  if (f==="all") return true;
+  if (!d || d==="확인불가") return false;
+  try { const days=(Date.now()-new Date(d))/86400000; return f==="week"?days<=7:days<=31; }
+  catch { return false; }
+}
+
+const todayStr = () => new Date().toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric"});
+const naverURL  = q => `https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(q)}&sm=tab_opt&sort=1`;
+const googleURL = q => `https://news.google.com/search?q=${encodeURIComponent(q)}&hl=ko&gl=KR&ceid=KR:ko`;
+
+async function fetchOneRSS(url, sourceName) {
+  const api = `${RSS2JSON}?rss_url=${encodeURIComponent(url)}&count=20`;
+  const res = await fetch(api);
+  if (!res.ok) throw new Error(`${sourceName} 수집 실패`);
+  const data = await res.json();
+  if (data.status !== "ok") throw new Error(`${sourceName} 파싱 오류`);
+  return (data.items||[]).map(item => ({
+    title: item.title?.trim()||"(제목없음)",
+    url:   item.link||item.guid||"#",
+    source: sourceName,
+    date:  item.pubDate ? item.pubDate.slice(0,10) : "확인불가",
+    _official: true,
+  }));
+}
+
+async function fetchGoogleRSS(query) {
+  const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=ko&gl=KR&ceid=KR:ko`;
+  const api = `${RSS2JSON}?rss_url=${encodeURIComponent(rssUrl)}&count=20`;
+  const res = await fetch(api);
+  if (!res.ok) throw new Error("구글뉴스 수집 실패");
+  const data = await res.json();
+  if (data.status !== "ok") throw new Error("구글뉴스 파싱 오류");
+  return (data.items||[]).map(item => {
+    const parts  = (item.title||"").split(" - ");
+    const source = parts.length>1 ? parts.pop().trim() : item.author||"구글뉴스";
+    return { title:parts.join(" - ").trim()||"(제목없음)", url:item.link||"#", source, date:item.pubDate?item.pubDate.slice(0,10):"확인불가", _official:isPub(source) };
+  });
+}
+
+async function fetchTab(tab) {
+  const settled = await Promise.allSettled([
+    ...tab.feeds.map(fk => fetchOneRSS(KR_RSS[fk]?.url, KR_RSS[fk]?.label)),
+    tab.googleQuery ? fetchGoogleRSS(tab.googleQuery) : Promise.resolve([]),
+  ]);
+  const all = settled.flatMap(r => r.status==="fulfilled" ? r.value : []);
+  const seen = new Set();
+  return all.filter(it => { if(seen.has(it.url)) return false; seen.add(it.url); return true; })
+            .sort((a,b) => { if(a.date==="확인불가") return 1; if(b.date==="확인불가") return -1; return new Date(b.date)-new Date(a.date); });
+}
+
+async function generateReport(scraps) {
+  const lines = scraps.map((s,i)=>`${i+1}. [${s._cat||""}] ${s.title} (${s.source||""}, ${s.date||"날짜불명"})\n   URL: ${s.url||""}`).join("\n\n");
+  const res = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1500,
+      messages:[{role:"user",content:`아래 뉴스를 포항시청 공동주택과용 공문서 형식 동향 보고서로 작성하세요.\n마크다운 없이 순수 텍스트만. 기준일: ${todayStr()}\n\n뉴스 항목:\n${lines}\n\n형식:\n□ 공동주택 관련 주요 동향 보고 (기준일: ${todayStr()})\n\n1. [분야명] 주요 동향\n  ○ 내용 요약 (출처, 날짜)\n\n※ 본 내용은 공식 발표·뉴스 기반이며, 상세 내용은 원문 확인 바랍니다.`}] }),
+  });
+  const data = await res.json();
+  return data.content?.find(b=>b.type==="text")?.text||"";
+}
+
+const seg = active => ({
+  padding:"4px 9px",borderRadius:"8px",border:"none",fontSize:"11px",cursor:"pointer",
+  background:active?"#1a3a5c":"transparent",color:active?"#fff":"#556",fontWeight:active?"600":"400",
+});
+
+// ── 탭 편집 모달 ──────────────────────────────────────────
+function TabEditModal({ tab, onSave, onClose }) {
+  const [label,setLabel]=useState(tab?.label.replace(/^.\s/,"")||"");
+  const [icon,setIcon]=useState(tab?.icon||"📋");
+  const [desc,setDesc]=useState(tab?.desc||"");
+  const [feeds,setFeeds]=useState(tab?.feeds||[]);
+  const [gQuery,setGQuery]=useState(tab?.googleQuery||"");
+  const [kws,setKws]=useState((tab?.keywords||[]).join(", "));
+  const [naver,setNaver]=useState(tab?.naverQuery||"");
+  const [gSearch,setGSearch]=useState(tab?.googleSearchQuery||"");
+  const toggleFeed=fk=>setFeeds(p=>p.includes(fk)?p.filter(x=>x!==fk):[...p,fk]);
+  const ok=label.trim()&&(feeds.length>0||gQuery.trim());
+  const IS={width:"100%",marginTop:"4px",padding:"8px 10px",borderRadius:"7px",border:"1px solid #d0dcea",fontSize:"12px",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+  const LS={fontSize:"11px",fontWeight:"600",color:"#5a7a96",display:"block",marginTop:"10px"};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.52)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:"14px"}}>
+      <div style={{background:"#fff",borderRadius:"14px",width:"100%",maxWidth:"440px",padding:"18px",boxShadow:"0 8px 28px rgba(0,0,0,0.22)",maxHeight:"94vh",overflowY:"auto"}}>
+        <div style={{fontSize:"14px",fontWeight:"700",color:"#1a3a5c",marginBottom:"12px"}}>{tab?.id?"✏️ 탭 편집":"➕ 새 탭 추가"}</div>
+        <label style={{...LS,marginTop:0}}>아이콘</label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginTop:"4px"}}>{ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{fontSize:"18px",padding:"3px 5px",border:ic===icon?"2px solid #2d6a9f":"2px solid #e0e8f0",borderRadius:"6px",background:ic===icon?"#e8f0fe":"#fff",cursor:"pointer"}}>{ic}</button>)}</div>
+        <label style={LS}>탭 이름 *</label><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="예: 소방안전" style={IS}/>
+        <label style={LS}>설명</label><input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="예: 소방청 관련 공식 발표" style={IS}/>
+        <label style={LS}>🇰🇷 korea.kr RSS <span style={{fontWeight:"400",color:"#9ab"}}>(복수 선택)</span></label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:"5px",marginTop:"5px"}}>
+          {Object.entries(KR_RSS).map(([k,v])=>(
+            <button key={k} onClick={()=>toggleFeed(k)} style={{padding:"4px 9px",borderRadius:"8px",fontSize:"11px",cursor:"pointer",border:feeds.includes(k)?"2px solid #1a5c9a":"1px solid #d0dcea",background:feeds.includes(k)?"#e8f0fe":"#fff",color:feeds.includes(k)?"#1a5c9a":"#556",fontWeight:feeds.includes(k)?"700":"400"}}>{v.label}</button>
+          ))}
+        </div>
+        <label style={LS}>📡 구글뉴스 키워드 <span style={{fontWeight:"400",color:"#9ab"}}>(선택)</span></label><input value={gQuery} onChange={e=>setGQuery(e.target.value)} placeholder="예: HUG LH 공동주택 공고" style={IS}/>
+        <label style={LS}>🔑 강조 키워드 <span style={{fontWeight:"400",color:"#9ab"}}>(쉼표 구분)</span></label><input value={kws} onChange={e=>setKws(e.target.value)} placeholder="예: 공동주택, 아파트, 관리비" style={IS}/>
+        <label style={LS}>네이버 검색어</label><input value={naver} onChange={e=>setNaver(e.target.value)} style={IS}/>
+        <label style={LS}>구글 검색어</label><input value={gSearch} onChange={e=>setGSearch(e.target.value)} style={IS}/>
+        <div style={{display:"flex",gap:"7px",marginTop:"16px"}}>
+          <button onClick={onClose} style={{flex:1,padding:"9px",borderRadius:"8px",border:"1px solid #ddd",background:"#f5f7fa",cursor:"pointer",fontSize:"12px"}}>취소</button>
+          <button onClick={()=>ok&&onSave({label:`${icon} ${label.trim()}`,icon,desc:desc.trim(),feeds,googleQuery:gQuery.trim(),keywords:kws.split(",").map(k=>k.trim()).filter(Boolean),naverQuery:naver.trim()||gQuery.trim(),googleSearchQuery:gSearch.trim()||gQuery.trim()})} disabled={!ok} style={{flex:2,padding:"9px",borderRadius:"8px",border:"none",background:ok?"#1a3a5c":"#ccc",color:"#fff",fontWeight:"700",cursor:ok?"pointer":"default",fontSize:"12px"}}>저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 보고서 모달 ───────────────────────────────────────────
+function ReportModal({ scraps, onClose }) {
+  const [report,setReport]=useState(""); const [loading,setLoading]=useState(true); const [copied,setCopied]=useState(false);
+  useEffect(()=>{run();},[]);
+  const run=async()=>{setLoading(true);setReport("");try{setReport(await generateReport(scraps));}catch{setReport("오류 발생.");}finally{setLoading(false);}};
+  const copy=async()=>{await navigator.clipboard.writeText(report);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+  const print=()=>{
+    const w=window.open("","_blank");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>동향보고서</title><style>body{font-family:'Malgun Gothic',sans-serif;font-size:13px;line-height:2.1;padding:20mm 25mm;color:#111}pre{white-space:pre-wrap;word-break:break-all}h2{font-size:15px;border-bottom:2px solid #1a3a5c;padding-bottom:6px;color:#1a3a5c;margin-bottom:14px}@media print{body{padding:15mm}}</style></head><body><h2>포항시 공동주택과 — 동향 보고서</h2><pre>${report.replace(/</g,"&lt;")}</pre></body></html>`);
+    w.document.close();setTimeout(()=>w.print(),400);
+  };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"14px",overflowY:"auto"}}>
+      <div style={{background:"#fff",borderRadius:"14px",width:"100%",maxWidth:"540px",marginTop:"8px",marginBottom:"20px",boxShadow:"0 8px 30px rgba(0,0,0,0.25)"}}>
+        <div style={{padding:"12px 15px",borderBottom:"1px solid #eef2f7",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:"14px",fontWeight:"700",color:"#1a3a5c"}}>📄 동향 보고서 자동 생성</span>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:"20px",cursor:"pointer",color:"#aaa"}}>×</button>
+        </div>
+        <div style={{padding:"13px 15px"}}>
+          {loading?<div style={{textAlign:"center",padding:"28px",color:"#5a7fa0"}}><div style={{fontSize:"26px",marginBottom:"8px"}}>✍️</div><div style={{fontSize:"12px"}}>보고서 작성 중… (20~30초)</div></div>
+          :<pre style={{whiteSpace:"pre-wrap",wordBreak:"break-all",fontSize:"12px",lineHeight:"1.9",color:"#1a2a3a",background:"#f8fafb",borderRadius:"8px",padding:"12px",border:"1px solid #e4ecf4",fontFamily:"'Malgun Gothic',monospace",maxHeight:"380px",overflowY:"auto",margin:0}}>{report}</pre>}
+        </div>
+        {!loading&&<div style={{padding:"9px 15px 13px",borderTop:"1px solid #eef2f7",display:"flex",gap:"7px"}}>
+          <button onClick={run} style={{padding:"8px 11px",borderRadius:"7px",border:"1px solid #ddd",background:"#f5f7fa",cursor:"pointer",fontSize:"11px"}}>🔄 재생성</button>
+          <button onClick={copy} style={{flex:1,padding:"8px",borderRadius:"7px",border:"none",background:copied?"#4caf50":"#2d6a9f",color:"#fff",fontWeight:"700",cursor:"pointer",fontSize:"11px"}}>{copied?"✅ 복사됨!":"📋 텍스트 복사"}</button>
+          <button onClick={print} style={{padding:"8px 12px",borderRadius:"7px",border:"none",background:"#1a3a5c",color:"#fff",fontWeight:"700",cursor:"pointer",fontSize:"11px"}}>🖨️ 인쇄</button>
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+// ── 기사 목록 ─────────────────────────────────────────────
+function ItemList({ items, tab, toggleScrap, isScraped }) {
+  const kws=tab?.keywords||[];
+  const hasKw=title=>kws.some(k=>title.includes(k));
+  return (
+    <div style={{background:"#fff",borderRadius:"12px",overflow:"hidden",boxShadow:"0 1px 4px rgba(0,0,0,0.07)"}}>
+      {items.map((item,i)=>{
+        const sc=isScraped(item); const pub=isPub(item.source||""); const hit=hasKw(item.title);
+        return (
+          <div key={i} style={{padding:"10px 13px",borderBottom:i<items.length-1?"1px solid #f0f4f8":"none",display:"flex",gap:"7px",alignItems:"flex-start",background:hit?"#fffdf5":"#fff"}}>
+            <button onClick={()=>toggleScrap(item,tab?.label)} style={{background:"none",border:"none",cursor:"pointer",fontSize:"17px",flexShrink:0,lineHeight:1,padding:"2px 0"}}>{sc?"⭐":"☆"}</button>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",gap:"4px",marginBottom:"3px",flexWrap:"wrap",alignItems:"center"}}>
+                {hit&&<span style={{fontSize:"10px",color:"#c05000",background:"#fff0e0",borderRadius:"3px",padding:"1px 5px",border:"1px solid #f0c090",fontWeight:"700"}}>🔴 관련</span>}
+                <span style={{fontSize:"10px",color:"#fff",background:pub?"#1a5c9a":"#7a9ab0",borderRadius:"3px",padding:"1px 5px",whiteSpace:"nowrap"}}>{pub?"🏛":"📰"} {item.source}</span>
+                {item._official&&!pub&&<span style={{fontSize:"10px",color:"#c05000",background:"#fff3e0",borderRadius:"3px",padding:"1px 4px",border:"1px solid #f0b060"}}>공식</span>}
+              </div>
+              <a href={item.url} target="_blank" rel="noopener noreferrer" style={{fontSize:"13px",fontWeight:hit?"700":"600",color:hit?"#1a2000":"#1a2a3a",textDecoration:"none",lineHeight:"1.4",display:"block"}}>{item.title}</a>
+              <div style={{display:"flex",gap:"8px",marginTop:"3px"}}>
+                {item.date!=="확인불가"&&<span style={{fontSize:"10px",color:"#9ab"}}>📅 {item.date}</span>}
+                <a href={item.url} target="_blank" rel="noopener noreferrer" style={{fontSize:"10px",color:"#7ab",textDecoration:"underline"}}>원문 →</a>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SourceBadges({ tab }) {
+  if (!tab) return null;
+  const krFeeds=(tab.feeds||[]).map(k=>KR_RSS[k]?.label).filter(Boolean);
+  return (
+    <div style={{display:"flex",gap:"4px",flexWrap:"wrap",padding:"6px 11px 0"}}>
+      {krFeeds.map(l=><span key={l} style={{fontSize:"10px",color:"#1a5c9a",background:"#e8f0fe",borderRadius:"4px",padding:"2px 6px",border:"1px solid #90b8e0"}}>🇰🇷 {l}</span>)}
+      {tab.googleQuery&&<span style={{fontSize:"10px",color:"#555",background:"#f0f4f8",borderRadius:"4px",padding:"2px 6px",border:"1px solid #d0dcea"}}>📡 구글뉴스</span>}
+    </div>
+  );
+}
+
+// ── 메인 앱 ──────────────────────────────────────────────
+function App() {
+  const [tabs,setTabs]=useState(()=>{try{return JSON.parse(localStorage.getItem(STORAGE_KEY))||DEFAULT_TABS;}catch{return DEFAULT_TABS;}});
+  const [scraps,setScraps]=useState(()=>{try{return JSON.parse(localStorage.getItem(SCRAPS_KEY))||[];}catch{return [];}});
+  const [results,setResults]=useState({});
+  const [loading,setLoading]=useState({});
+  const [errors,setErrors]=useState({});
+  const [activeId,setActiveId]=useState(null);
+  const [view,setView]=useState("rss");
+  const [dateF,setDateF]=useState("all");
+  const [srcF,setSrcF]=useState("all");
+  const [kwOnly,setKwOnly]=useState(false);
+  const [allLoading,setAllLoading]=useState(false);
+  const [settingsOpen,setSettingsOpen]=useState(false);
+  const [modal,setModal]=useState(null);
+  const [delConfirm,setDelConfirm]=useState(null);
+  const [showReport,setShowReport]=useState(false);
+
+  useEffect(()=>{localStorage.setItem(STORAGE_KEY,JSON.stringify(tabs));},[tabs]);
+  useEffect(()=>{localStorage.setItem(SCRAPS_KEY,JSON.stringify(scraps));},[scraps]);
+
+  const runFetch=useCallback(async tab=>{
+    setLoading(p=>({...p,[tab.id]:true}));setErrors(p=>({...p,[tab.id]:null}));
+    try{const items=await fetchTab(tab);setResults(p=>({...p,[tab.id]:items}));}
+    catch(e){setErrors(p=>({...p,[tab.id]:e.message||"수집 실패"}));}
+    finally{setLoading(p=>({...p,[tab.id]:false}));}
+  },[]);
+
+  const handleTabClick=id=>{setActiveId(id);setView("rss");const t=tabs.find(x=>x.id===id);if(t&&!results[id])runFetch(t);};
+  const handleAllSearch=async()=>{setAllLoading(true);setView("rss");await Promise.all(tabs.map(t=>runFetch(t)));setAllLoading(false);if(tabs.length)setActiveId(tabs[0].id);};
+  const toggleScrap=(item,cat)=>{const key=item.url||item.title;const has=scraps.some(s=>(s.url||s.title)===key);setScraps(p=>has?p.filter(s=>(s.url||s.title)!==key):[...p,{...item,_cat:cat,_scrapDate:new Date().toISOString()}]);};
+  const isScraped=item=>scraps.some(s=>(s.url||s.title)===(item.url||item.title));
+  const addTab=d=>{setTabs(p=>[...p,{id:Date.now().toString(),color:"#1a3a5c",filter:[],...d}]);setModal(null);};
+  const editTab=d=>{setTabs(p=>p.map(t=>t.id===modal.id?{...t,...d}:t));setResults(p=>{const n={...p};delete n[modal.id];return n;});setModal(null);};
+  const delTab=id=>{setTabs(p=>p.filter(t=>t.id!==id));if(activeId===id)setActiveId(null);setDelConfirm(null);};
+
+  const applyFilter=arr=>{
+    const ct=tabs.find(t=>t.id===activeId); const kws=ct?.keywords||[];
+    return (arr||[]).filter(x=>passDate(x.date,dateF)&&(srcF==="all"?true:srcF==="공공기관"?isPub(x.source||""):!isPub(x.source||""))&&(!kwOnly||kws.some(k=>x.title.includes(k))));
+  };
+
+  const currentTab=tabs.find(t=>t.id===activeId);
+  const rawItems=view==="scraps"?scraps:(activeId?results[activeId]||[]:[]);
+  const displayItems=applyFilter(rawItems);
+  const isLoading=activeId?!!loading[activeId]:false;
+  const currentError=activeId?errors[activeId]:null;
+  const kwCount=(results[activeId]||[]).filter(x=>(currentTab?.keywords||[]).some(k=>x.title.includes(k))).length;
+
+  return (
+    <div style={{fontFamily:"'Nanum Gothic','Malgun Gothic',sans-serif",background:"#f0f4f8",minHeight:"100vh"}}>
+      {/* 헤더 */}
+      <div style={{background:"linear-gradient(135deg,#1a3a5c,#2d6a9f)",color:"#fff",padding:"13px 13px 11px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+          <span style={{fontSize:"22px"}}>🏙️</span>
+          <div><div style={{fontSize:"15px",fontWeight:"700"}}>포항시 공동주택과</div><div style={{fontSize:"10px",opacity:0.75}}>동향 모니터링 — korea.kr RSS 통합</div></div>
+        </div>
+        <button onClick={()=>setSettingsOpen(p=>!p)} style={{background:settingsOpen?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.3)",color:"#fff",borderRadius:"7px",padding:"5px 10px",fontSize:"11px",cursor:"pointer"}}>⚙️ 관리</button>
+      </div>
+
+      {/* 관리 패널 */}
+      {settingsOpen&&(
+        <div style={{background:"#1e3d5a",padding:"10px 13px",borderBottom:"2px solid #2d6a9f"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"7px"}}>
+            <span style={{color:"#a0c4e0",fontSize:"12px",fontWeight:"600"}}>📂 탭 구성 관리</span>
+            <div style={{display:"flex",gap:"6px"}}>
+              <button onClick={()=>{setTabs(DEFAULT_TABS);setResults({});setActiveId(null);}} style={{fontSize:"11px",color:"#f0a0a0",background:"none",border:"1px solid #f0a0a060",borderRadius:"5px",padding:"3px 7px",cursor:"pointer"}}>초기화</button>
+              <button onClick={()=>setModal("add")} style={{fontSize:"11px",color:"#fff",background:"#2d6a9f",border:"none",borderRadius:"5px",padding:"4px 10px",cursor:"pointer",fontWeight:"600"}}>➕ 탭 추가</button>
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:"4px",maxHeight:"240px",overflowY:"auto"}}>
+            {tabs.map(t=>(
+              <div key={t.id} style={{background:"rgba(255,255,255,0.08)",borderRadius:"7px",padding:"6px 10px",display:"flex",alignItems:"flex-start",gap:"6px"}}>
+                <span style={{fontSize:"15px",marginTop:"1px"}}>{t.icon}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{color:"#e0eeff",fontSize:"12px",fontWeight:"600"}}>{t.label}</div>
+                  <div style={{color:"#6a9fc0",fontSize:"10px",marginTop:"1px"}}>{(t.feeds||[]).map(k=>KR_RSS[k]?.label).filter(Boolean).join(" · ")}{t.googleQuery&&` + ${t.googleQuery.slice(0,20)}…`}</div>
+                  {(t.keywords||[]).length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:"3px",marginTop:"3px"}}>{t.keywords.slice(0,5).map(k=><span key={k} style={{fontSize:"10px",color:"#ffd080",background:"rgba(255,200,0,0.12)",borderRadius:"3px",padding:"0 4px"}}>#{k}</span>)}</div>}
+                </div>
+                <button onClick={()=>setModal(t)} style={{fontSize:"11px",color:"#a0d0ff",background:"none",border:"1px solid #a0d0ff40",borderRadius:"4px",padding:"2px 7px",cursor:"pointer",flexShrink:0}}>편집</button>
+                {delConfirm===t.id
+                  ?<div style={{display:"flex",gap:"3px",flexShrink:0}}><button onClick={()=>delTab(t.id)} style={{fontSize:"11px",color:"#fff",background:"#c0392b",border:"none",borderRadius:"4px",padding:"2px 7px",cursor:"pointer"}}>확인</button><button onClick={()=>setDelConfirm(null)} style={{fontSize:"11px",color:"#ccc",background:"none",border:"1px solid #666",borderRadius:"4px",padding:"2px 5px",cursor:"pointer"}}>취소</button></div>
+                  :<button onClick={()=>setDelConfirm(t.id)} style={{fontSize:"13px",color:"#e08080",background:"none",border:"none",cursor:"pointer",padding:"0 2px"}}>🗑</button>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 탭 버튼 */}
+      <div style={{padding:"10px 11px 0",display:"flex",flexWrap:"wrap",gap:"5px"}}>
+        <button onClick={handleAllSearch} disabled={allLoading} style={{padding:"6px 12px",borderRadius:"16px",border:"2px solid #d94f00",background:"#fff6f0",color:"#d94f00",fontWeight:"700",fontSize:"12px",cursor:allLoading?"default":"pointer",display:"flex",alignItems:"center",gap:"4px"}}>{allLoading?"⟳ 수집중…":"⚡ 전체 수집"}</button>
+        <button onClick={()=>{setView("scraps");setActiveId(null);}} style={{padding:"6px 11px",borderRadius:"16px",border:view==="scraps"?"2px solid #e09000":"2px solid #d8e4f0",background:view==="scraps"?"#e09000":"#fff",color:view==="scraps"?"#fff":"#445",fontWeight:"600",fontSize:"12px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px"}}>
+          ⭐ 스크랩{scraps.length>0&&<span style={{background:view==="scraps"?"rgba(255,255,255,0.4)":"#e09000",color:"#fff",borderRadius:"10px",padding:"0 5px",fontSize:"10px"}}>{scraps.length}</span>}
+        </button>
+        {tabs.map(t=>{
+          const active=activeId===t.id&&view!=="scraps";
+          const kc=(results[t.id]||[]).filter(x=>(t.keywords||[]).some(k=>x.title.includes(k))).length;
+          return (
+            <button key={t.id} onClick={()=>handleTabClick(t.id)} style={{padding:"6px 11px",borderRadius:"16px",border:active?`2px solid ${t.color||"#1a3a5c"}`:"2px solid #d8e4f0",background:active?(t.color||"#1a3a5c"):"#fff",color:active?"#fff":"#445",fontWeight:active?"700":"400",fontSize:"12px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px"}}>
+              {t.icon} {t.label.replace(/^.\s/,"")}
+              {kc>0&&!active&&<span style={{background:"#e05000",color:"#fff",borderRadius:"10px",padding:"0 5px",fontSize:"10px",fontWeight:"700"}}>{kc}</span>}
+              {results[t.id]&&!active&&kc===0&&<span style={{width:"5px",height:"5px",borderRadius:"50%",background:"#4caf50",display:"inline-block"}}/>}
+              {loading[t.id]&&<span style={{fontSize:"10px",opacity:0.6}}>⟳</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeId&&view==="rss"&&<SourceBadges tab={currentTab}/>}
+
+      {/* 필터 바 */}
+      {(activeId||view==="scraps")&&(
+        <div style={{padding:"7px 11px 0",display:"flex",gap:"6px",alignItems:"center",flexWrap:"wrap"}}>
+          {view!=="scraps"&&activeId&&<div style={{display:"flex",background:"#fff",borderRadius:"10px",padding:"2px",border:"1px solid #d0dcea"}}><button onClick={()=>setView("rss")} style={seg(view==="rss")}>📡 RSS</button><button onClick={()=>setView("links")} style={seg(view==="links")}>🔗 포털</button></div>}
+          <div style={{display:"flex",background:"#fff",borderRadius:"10px",padding:"2px",border:"1px solid #d0dcea"}}>{[["all","전체"],["week","이번 주"],["month","이번 달"]].map(([v,l])=><button key={v} onClick={()=>setDateF(v)} style={seg(dateF===v)}>{l}</button>)}</div>
+          <div style={{display:"flex",background:"#fff",borderRadius:"10px",padding:"2px",border:"1px solid #d0dcea"}}>{[["all","전체"],["공공기관","🏛"],["언론사","📰"]].map(([v,l])=><button key={v} onClick={()=>setSrcF(v)} style={seg(srcF===v)}>{l}</button>)}</div>
+          {(currentTab?.keywords||[]).length>0&&view==="rss"&&<button onClick={()=>setKwOnly(p=>!p)} style={{padding:"4px 9px",borderRadius:"8px",border:`1px solid ${kwOnly?"#e05000":"#d0dcea"}`,background:kwOnly?"#fff0e8":"#fff",color:kwOnly?"#e05000":"#556",fontSize:"11px",cursor:"pointer",fontWeight:kwOnly?"700":"400"}}>🔴 관련만 ({kwCount})</button>}
+          {view!=="links"&&<span style={{fontSize:"11px",color:"#8a9ab0"}}>{displayItems.length}건</span>}
+          {view==="scraps"&&scraps.length>0&&<button onClick={()=>setShowReport(true)} style={{marginLeft:"auto",padding:"6px 13px",borderRadius:"8px",border:"none",background:"#1a3a5c",color:"#fff",fontSize:"11px",fontWeight:"700",cursor:"pointer"}}>📄 보고서 생성</button>}
+          {view==="rss"&&results[activeId]&&<button onClick={()=>{setResults(p=>{const n={...p};delete n[activeId];return n;});runFetch(currentTab);}} style={{marginLeft:"auto",fontSize:"11px",color:"#5a8fc0",background:"none",border:"1px solid #c0d8ee",borderRadius:"6px",padding:"4px 9px",cursor:"pointer"}}>🔄 새로고침</button>}
+        </div>
+      )}
+
+      {/* 콘텐츠 */}
+      <div style={{padding:"10px 11px 10px"}}>
+        {!activeId&&view!=="scraps"&&!allLoading&&(
+          <div style={{background:"#fff",borderRadius:"12px",padding:"20px 16px"}}>
+            <div style={{textAlign:"center",marginBottom:"14px"}}><div style={{fontSize:"28px",marginBottom:"6px"}}>📡</div><div style={{fontSize:"13px",fontWeight:"600",color:"#445"}}>탭을 선택하거나 전체 수집을 시작하세요</div></div>
+            <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+              {DEFAULT_TABS.map(t=>(
+                <div key={t.id} style={{background:"#f8fafb",borderRadius:"8px",padding:"8px 11px",border:`1px solid ${t.color}30`}}>
+                  <div style={{fontSize:"12px",fontWeight:"700",color:t.color,marginBottom:"2px"}}>{t.label}</div>
+                  <div style={{fontSize:"11px",color:"#7a9ab0"}}>{t.desc}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:"3px",marginTop:"4px"}}>
+                    {(t.feeds||[]).map(k=><span key={k} style={{fontSize:"10px",color:"#1a5c9a",background:"#e8f0fe",borderRadius:"3px",padding:"1px 5px"}}>🇰🇷 {KR_RSS[k]?.label}</span>)}
+                    {t.googleQuery&&<span style={{fontSize:"10px",color:"#555",background:"#f0f4f8",borderRadius:"3px",padding:"1px 5px"}}>📡 구글뉴스</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {(allLoading||(isLoading&&!allLoading))&&<div style={{background:"#fff",borderRadius:"12px",padding:"24px",textAlign:"center"}}><div style={{fontSize:"24px",marginBottom:"7px"}}>{allLoading?"⚡":"📡"}</div><div style={{fontSize:"12px",color:"#5a7fa0"}}>{allLoading?"전체 탭 수집 중…":"RSS 수집 중…"}</div><div style={{fontSize:"10px",color:"#9ab",marginTop:"3px"}}>3~10초 소요</div></div>}
+        {currentError&&!isLoading&&view==="rss"&&<div style={{background:"#fff3f3",borderRadius:"10px",padding:"12px 14px",color:"#c0392b",fontSize:"12px"}}>⚠️ {currentError}<button onClick={()=>runFetch(currentTab)} style={{marginLeft:"10px",fontSize:"11px",color:"#c0392b",background:"none",border:"1px solid #c0392b",borderRadius:"5px",padding:"2px 8px",cursor:"pointer"}}>재시도</button></div>}
+        {view==="links"&&activeId&&!allLoading&&(
+          <div style={{background:"#fff",borderRadius:"12px",padding:"16px"}}>
+            <div style={{fontSize:"13px",fontWeight:"700",color:"#1a3a5c",marginBottom:"12px"}}>{currentTab?.icon} {currentTab?.label} — 포털 직접 검색</div>
+            <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+              <a href={naverURL(currentTab?.naverQuery||currentTab?.googleQuery||"")} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:"12px",padding:"12px 14px",borderRadius:"10px",background:"#e8f5e9",border:"1px solid #a5d6a7",textDecoration:"none"}}><div style={{width:"30px",height:"30px",borderRadius:"8px",background:"#03c75a",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{color:"#fff",fontWeight:"900",fontSize:"14px"}}>N</span></div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"700",color:"#1b5e20"}}>네이버 뉴스</div><div style={{fontSize:"11px",color:"#388e3c"}}>{currentTab?.naverQuery||currentTab?.googleQuery}</div></div><span>→</span></a>
+              <a href={googleURL(currentTab?.googleSearchQuery||currentTab?.googleQuery||"")} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:"12px",padding:"12px 14px",borderRadius:"10px",background:"#e8f0fe",border:"1px solid #90caf9",textDecoration:"none"}}><div style={{width:"30px",height:"30px",borderRadius:"8px",background:"#4285f4",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{color:"#fff",fontWeight:"900",fontSize:"14px"}}>G</span></div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"700",color:"#0d47a1"}}>구글 뉴스</div><div style={{fontSize:"11px",color:"#1565c0"}}>{currentTab?.googleSearchQuery||currentTab?.googleQuery}</div></div><span>→</span></a>
+              <a href="https://www.korea.kr/briefing/pressReleaseList.do" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:"12px",padding:"12px 14px",borderRadius:"10px",background:"#fff8e8",border:"1px solid #f0c040",textDecoration:"none"}}><div style={{width:"30px",height:"30px",borderRadius:"8px",background:"#e09000",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{fontSize:"16px"}}>🇰🇷</span></div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"700",color:"#6a4000"}}>정책브리핑 보도자료</div><div style={{fontSize:"11px",color:"#8a6000"}}>korea.kr 공식 보도자료</div></div><span>→</span></a>
+            </div>
+          </div>
+        )}
+        {view==="scraps"&&scraps.length===0&&<div style={{background:"#fff",borderRadius:"12px",padding:"26px",textAlign:"center",color:"#aaa"}}><div style={{fontSize:"26px",marginBottom:"7px"}}>⭐</div><div style={{fontSize:"12px"}}>기사 옆 ☆ 를 눌러 스크랩하세요</div></div>}
+        {!isLoading&&!allLoading&&view==="rss"&&displayItems.length===0&&rawItems.length>0&&<div style={{background:"#fff",borderRadius:"10px",padding:"18px",textAlign:"center",color:"#aaa",fontSize:"12px"}}>선택한 필터에 맞는 기사가 없습니다</div>}
+        {!isLoading&&!allLoading&&displayItems.length>0&&view!=="links"&&<ItemList items={displayItems} tab={view==="scraps"?null:currentTab} toggleScrap={toggleScrap} isScraped={isScraped}/>}
+      </div>
+
+      <div style={{padding:"4px 11px 18px",textAlign:"center",fontSize:"10px",color:"#9ab"}}>🇰🇷 korea.kr 공식 RSS · 📡 구글뉴스 RSS · 포항시 공동주택과</div>
+      {modal&&<TabEditModal tab={modal==="add"?null:modal} onSave={modal==="add"?addTab:editTab} onClose={()=>setModal(null)}/>}
+      {showReport&&<ReportModal scraps={scraps} onClose={()=>setShowReport(false)}/>}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
 </html>
